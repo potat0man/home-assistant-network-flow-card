@@ -29,26 +29,32 @@ No dependencies and no build step — it's a single vanilla web component.
 
 ## Example
 
-The topology below is two ISP modems into a router, down through a switch to
-a wired access point and a second switch, out to two mesh access points, and
+The topology below is the internet into two ISP modems (one wired, one
+cellular) into a router, down through a switch to a wired access point, a
+server, a desktop PC and a second switch, out to two mesh access points, and
 finally a third switch hanging off one of them.
 
 ```yaml
 type: custom:network-flow-card
 title: Network
 nodes:
+  - id: www
+    name: Internet
+    type: www
+    level: 0
+
   - id: wan1
     name: WAN 1
-    type: modem
-    level: 0
+    type: wired_modem
+    level: 1
     max_speed: 300
     latency: sensor.wan1_latency
     download: sensor.wan1_rx_speed
     upload: sensor.wan1_tx_speed
   - id: wan2
     name: WAN 2
-    type: modem
-    level: 0
+    type: wireless_modem
+    level: 1
     max_speed: 150
     latency: sensor.wan2_latency
     download: sensor.wan2_rx_speed
@@ -57,7 +63,7 @@ nodes:
   - id: gateway
     name: Gateway
     type: router
-    level: 1
+    level: 2
     state: sensor.gateway_state
     secondary: sensor.gateway_clients
     secondary_unit: clients
@@ -65,39 +71,54 @@ nodes:
   - id: core_switch
     name: Core Switch
     type: switch
-    level: 2
+    level: 3
 
+  - id: nas
+    name: NAS
+    type: server
+    level: 4
+    state: binary_sensor.nas_online
+    secondary: sensor.nas_cpu
+  - id: desktop
+    name: Desktop
+    type: pc
+    level: 4
+    state: device_tracker.desktop
   - id: main_ap
     name: Main AP
     type: ap
-    level: 3
+    level: 4
   - id: office_switch
     name: Office Switch
     type: switch
-    level: 3
+    level: 4
 
   - id: kitchen_ap
     name: Kitchen AP
     type: ap
-    level: 4
+    level: 5
     secondary: sensor.kitchen_ap_clients
     secondary_unit: clients
   - id: bedroom_ap
     name: Bedroom AP
     type: ap
-    level: 4
+    level: 5
     secondary: sensor.bedroom_ap_clients
     secondary_unit: clients
 
   - id: bedroom_switch
     name: Bedroom Switch
     type: switch
-    level: 5
+    level: 6
 
 links:
+  - { from: www, to: wan1 }
+  - { from: www, to: wan2 }
   - { from: wan1, to: gateway }
   - { from: wan2, to: gateway }
   - { from: gateway, to: core_switch }
+  - { from: core_switch, to: nas }
+  - { from: core_switch, to: desktop }
   - { from: core_switch, to: main_ap }
   - { from: core_switch, to: office_switch }
   - { from: main_ap, to: kitchen_ap, wireless: true, label: mesh }
@@ -130,7 +151,7 @@ links:
 | `id` | required | Unique key, referenced by links. |
 | `level` | `0` | Row, counting from the top. Nodes are positioned under their parent(s) — siblings sharing one parent fan out symmetrically around it; nodes with no parent in an earlier level are spread evenly instead. |
 | `name` | `id` | Label under the circle. |
-| `type` | — | `modem`, `router`, `switch` or `ap`. Sets the default icon and colour. |
+| `type` | — | One of the [node types](#node-types) below. Sets the default icon and colour. |
 | `icon` | by type | Any `mdi:` icon. |
 | `color` | by type | Any CSS colour. |
 | `download` / `upload` | — | Rate sensors. Shown inside the circle and used to animate links that don't define their own. |
@@ -140,6 +161,25 @@ links:
 | `state` | — | Entity that says whether the device is up. `off`, `unavailable`, `unknown`, `disconnected`, `offline`, `down` or `not_home` fades the node and stops its links. |
 | `entity` | first sensor | Entity opened when the circle is tapped. |
 | `max_speed` | card value | Full-speed reference for this node. |
+
+#### Node types
+
+| `type` | Icon | Colour | For |
+| --- | --- | --- | --- |
+| `www` | `mdi:web` | `#03a9f4` | The internet itself, above your modems. |
+| `wired_modem` | `mdi:router` | `#0288d1` | A cable, DSL or fibre modem. |
+| `wireless_modem` | `mdi:router-wireless` | `#0288d1` | An LTE/5G or satellite modem. |
+| `router` | `mdi:router-network` | `#7e57c2` | Router or gateway. |
+| `switch` | `mdi:lan` | `#26a69a` | Managed or unmanaged switch. |
+| `ap` | `mdi:access-point` | `#ef6c00` | Wireless access point. |
+| `server` | `mdi:server` | `#43a047` | NAS, hypervisor, home server. |
+| `pc` | `mdi:desktop-tower-monitor` | `#8d6e63` | Desktop, laptop or workstation. |
+
+Types are matched case-insensitively, and spaces and hyphens work as well as
+underscores — `wireless modem`, `Wireless-Modem` and `wireless_modem` are the
+same type. The older `modem` type still works and resolves to `wired_modem`.
+Anything unrecognised falls back to `mdi:lan-connect` in grey; use `icon:` and
+`color:` on the node to set your own.
 
 ### Links
 
