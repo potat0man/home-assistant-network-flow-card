@@ -5,8 +5,8 @@ A Lovelace card that draws your network as a flow diagram, in the spirit of
 sit on levels, links are drawn as two lanes (download and upload), and dots
 travel along each lane at a speed that tracks the actual throughput.
 
-Built for UniFi, but it reads plain Home Assistant sensors, so any integration
-that exposes a rate will work.
+It reads plain Home Assistant sensors, so any integration that exposes a rate
+works — it isn't tied to any one networking vendor.
 
 No dependencies and no build step — it's a single vanilla web component.
 
@@ -21,88 +21,88 @@ No dependencies and no build step — it's a single vanilla web component.
 
 ### Manual
 
-1. Copy `dist/unifi-network-flow-card.js` to `/config/www/`
+1. Copy `dist/network-flow-card.js` to `/config/www/`
 2. Settings → Dashboards → three-dot menu → **Resources** → Add resource
-   - URL `/local/unifi-network-flow-card.js`
+   - URL `/local/network-flow-card.js`
    - Type **JavaScript Module**
 3. Hard-refresh your browser
 
 ## Example
 
-The topology below is two LTE modems into a UniFi gateway, down through a PoE
-switch to a wired AP and a second switch, out to two mesh APs, and finally a
-third switch hanging off one of them.
+The topology below is two ISP modems into a router, down through a switch to
+a wired access point and a second switch, out to two mesh access points, and
+finally a third switch hanging off one of them.
 
 ```yaml
-type: custom:unifi-network-flow-card
+type: custom:network-flow-card
 title: Network
 nodes:
-  - id: mr600
-    name: MR600
+  - id: wan1
+    name: WAN 1
     type: modem
     level: 0
     max_speed: 300
-    latency: sensor.ucg_ultra_cloudflare_wan_latency
-    download: sensor.tp_link_mr600_lte_current_rx_speed
-    upload: sensor.tp_link_mr600_lte_current_tx_speed
-  - id: mr200
-    name: MR200
+    latency: sensor.wan1_latency
+    download: sensor.wan1_rx_speed
+    upload: sensor.wan1_tx_speed
+  - id: wan2
+    name: WAN 2
     type: modem
     level: 0
     max_speed: 150
-    latency: sensor.ucg_ultra_cloudflare_wan2_latency
-    download: sensor.tp_link_mr200_lte_current_rx_speed
-    upload: sensor.tp_link_mr200_lte_current_tx_speed
+    latency: sensor.wan2_latency
+    download: sensor.wan2_rx_speed
+    upload: sensor.wan2_tx_speed
 
-  - id: ucg
-    name: UCG Ultra
+  - id: gateway
+    name: Gateway
     type: router
     level: 1
-    state: sensor.ucg_ultra_state
-    secondary: sensor.ucg_ultra_clients
+    state: sensor.gateway_state
+    secondary: sensor.gateway_clients
     secondary_unit: clients
 
-  - id: usw8
-    name: USW Lite 8 PoE
+  - id: core_switch
+    name: Core Switch
     type: switch
     level: 2
 
-  - id: acpro
-    name: UAP AC Pro
+  - id: main_ap
+    name: Main AP
     type: ap
     level: 3
-  - id: flex1
-    name: Flex Mini 1
+  - id: office_switch
+    name: Office Switch
     type: switch
     level: 3
 
-  - id: kitchen
-    name: AC Lite Kitchen
+  - id: kitchen_ap
+    name: Kitchen AP
     type: ap
     level: 4
-    secondary: sensor.uap_ac_lite_kitchen_clients
+    secondary: sensor.kitchen_ap_clients
     secondary_unit: clients
-  - id: bedroom
-    name: AC Lite Bedroom
+  - id: bedroom_ap
+    name: Bedroom AP
     type: ap
     level: 4
-    secondary: sensor.uap_ac_lite_bedroom_clients
+    secondary: sensor.bedroom_ap_clients
     secondary_unit: clients
 
-  - id: flex2
-    name: Flex Mini 2
+  - id: bedroom_switch
+    name: Bedroom Switch
     type: switch
     level: 5
 
 links:
-  - { from: mr600, to: ucg }
-  - { from: mr200, to: ucg }
-  - { from: ucg, to: usw8 }
-  - { from: usw8, to: acpro }
-  - { from: usw8, to: flex1 }
-  - { from: acpro, to: kitchen, wireless: true, label: mesh }
-  - { from: acpro, to: bedroom, wireless: true, label: mesh }
-  - { from: bedroom, to: flex2 }
+  - { from: wan1, to: gateway }
+  - { from: wan2, to: gateway }
+  - { from: gateway, to: core_switch }
+  - { from: core_switch, to: main_ap }
+  - { from: core_switch, to: office_switch }
+  - { from: main_ap, to: kitchen_ap, wireless: true, label: mesh }
+  - { from: main_ap, to: bedroom_ap, wireless: true, label: mesh }
+  - { from: bedroom_ap, to: bedroom_switch }
 ```
 
 ## Configuration
@@ -176,33 +176,27 @@ download:
 Set these anywhere in your theme or via `card_mod`:
 
 ```yaml
---unf-down-color: "#2196f3"
---unf-up-color: "#ff9800"
+--nfc-down-color: "#2196f3"
+--nfc-up-color: "#ff9800"
 ```
 
 Node colours come from `color:` per node. The card respects
 `prefers-reduced-motion` and hides the dots when it's set.
 
-## A note on UniFi throughput sensors
+## A note on LAN throughput sensors
 
-The UniFi integration doesn't publish per-device or per-port throughput — only
-client counts, latency, CPU and memory. So links inside the LAN draw as static
-lanes unless you supply rate sensors yourself.
+Many integrations only publish client counts, latency, CPU and memory for
+LAN-side devices — not per-device or per-port throughput. So links inside the
+LAN draw as static lanes unless you supply rate sensors yourself.
 
-To animate them, enable the per-client bandwidth entities (they're disabled by
-default and report cumulative MB), then wrap each in a
+If your integration exposes cumulative bandwidth counters instead of a rate,
+wrap each one in a
 [Derivative helper](https://www.home-assistant.io/integrations/derivative/) with
-a unit time of seconds to turn it into a rate. Point the link's `download` and
-`upload` at the derivative sensors.
+a unit time of seconds to turn it into a rate, then point the link's `download`
+and `upload` at the derivative sensors.
 
 WAN links usually work out of the box, because most modem and gateway
 integrations expose an instantaneous rate.
-
-## Development
-
-`examples/preview.html` is a standalone page that runs the card against a fake
-`hass` object with simulated traffic. Open it in a browser — no Home Assistant
-needed. It stubs `ha-card` and `ha-icon`, so the icons are rough stand-ins.
 
 ## License
 

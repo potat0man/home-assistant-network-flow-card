@@ -1,5 +1,5 @@
 /**
- * UniFi Network Flow Card
+ * Network Flow Card
  * A Home Assistant Lovelace card that draws your network topology as a flow
  * diagram, in the spirit of power-flow-card-plus: nodes on levels, throughput
  * shown as dots travelling along the links.
@@ -98,10 +98,10 @@ function cubic(x1, y1, c1x, c1y, c2x, c2y, x2, y2) {
   return `M ${x1} ${y1} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${x2} ${y2}`;
 }
 
-class UnifiNetworkFlowCard extends HTMLElement {
+class NetworkFlowCard extends HTMLElement {
   static getStubConfig() {
     return {
-      type: "custom:unifi-network-flow-card",
+      type: "custom:network-flow-card",
       title: "Network",
       nodes: [
         { id: "wan", name: "WAN", type: "modem", level: 0 },
@@ -124,13 +124,13 @@ class UnifiNetworkFlowCard extends HTMLElement {
 
   setConfig(config) {
     if (!config || !Array.isArray(config.nodes) || !config.nodes.length) {
-      throw new Error("unifi-network-flow-card: 'nodes' must be a non-empty list");
+      throw new Error("network-flow-card: 'nodes' must be a non-empty list");
     }
 
     const opts = { ...DEFAULTS, ...config };
 
     const nodes = config.nodes.map((n, i) => {
-      if (!n.id) throw new Error(`unifi-network-flow-card: node #${i + 1} has no 'id'`);
+      if (!n.id) throw new Error(`network-flow-card: node #${i + 1} has no 'id'`);
       const type = n.type || "default";
       return {
         id: n.id,
@@ -155,8 +155,8 @@ class UnifiNetworkFlowCard extends HTMLElement {
     const links = (config.links || []).map((l, i) => {
       const from = byId.get(l.from);
       const to = byId.get(l.to);
-      if (!from) throw new Error(`unifi-network-flow-card: link #${i + 1} 'from: ${l.from}' is not a known node id`);
-      if (!to) throw new Error(`unifi-network-flow-card: link #${i + 1} 'to: ${l.to}' is not a known node id`);
+      if (!from) throw new Error(`network-flow-card: link #${i + 1} 'from: ${l.from}' is not a known node id`);
+      if (!to) throw new Error(`network-flow-card: link #${i + 1} 'to: ${l.to}' is not a known node id`);
 
       let download = mkSensor(l.download);
       let upload = mkSensor(l.upload);
@@ -682,14 +682,14 @@ class UnifiNetworkFlowCard extends HTMLElement {
         stroke-linecap: round;
         opacity: 0.55;
       }
-      .lane.down { stroke: var(--unf-down-color, #2196f3); }
-      .lane.up { stroke: var(--unf-up-color, #ff9800); }
+      .lane.down { stroke: var(--nfc-down-color, #2196f3); }
+      .lane.up { stroke: var(--nfc-up-color, #ff9800); }
       .lane.wireless { stroke-dasharray: 5 5; opacity: 0.45; }
       .lane.idle { opacity: 0.16; }
 
       .dot { stroke-width: 3.2px; }
-      .dot.down { fill: var(--unf-down-color, #2196f3); stroke: var(--unf-down-color, #2196f3); }
-      .dot.up { fill: var(--unf-up-color, #ff9800); stroke: var(--unf-up-color, #ff9800); }
+      .dot.down { fill: var(--nfc-down-color, #2196f3); stroke: var(--nfc-down-color, #2196f3); }
+      .dot.up { fill: var(--nfc-up-color, #ff9800); stroke: var(--nfc-up-color, #ff9800); }
 
       .node {
         position: absolute;
@@ -732,8 +732,8 @@ class UnifiNetworkFlowCard extends HTMLElement {
         white-space: nowrap;
       }
       .rate-line ha-icon.small { --mdc-icon-size: 10px; width: 10px; height: 10px; }
-      .rate-line.down { color: var(--unf-down-color, #2196f3); }
-      .rate-line.up { color: var(--unf-up-color, #ff9800); }
+      .rate-line.down { color: var(--nfc-down-color, #2196f3); }
+      .rate-line.up { color: var(--nfc-up-color, #ff9800); }
 
       .name {
         margin-top: 6px;
@@ -765,9 +765,9 @@ class UnifiNetworkFlowCard extends HTMLElement {
       }
       .link-label .link-name { color: var(--secondary-text-color); }
       .link-label .rate::before { margin-right: 2px; font-size: 10px; }
-      .link-label .rate.down { color: var(--unf-down-color, #2196f3); }
+      .link-label .rate.down { color: var(--nfc-down-color, #2196f3); }
       .link-label .rate.down::before { content: "\\2193"; }
-      .link-label .rate.up { color: var(--unf-up-color, #ff9800); }
+      .link-label .rate.up { color: var(--nfc-up-color, #ff9800); }
       .link-label .rate.up::before { content: "\\2191"; }
 
       @media (prefers-reduced-motion: reduce) {
@@ -778,20 +778,20 @@ class UnifiNetworkFlowCard extends HTMLElement {
   }
 }
 
-if (!customElements.get("unifi-network-flow-card")) {
-  customElements.define("unifi-network-flow-card", UnifiNetworkFlowCard);
+if (!customElements.get("network-flow-card")) {
+  customElements.define("network-flow-card", NetworkFlowCard);
 }
 
 window.customCards = window.customCards || [];
 window.customCards.push({
-  type: "unifi-network-flow-card",
-  name: "UniFi Network Flow Card",
+  type: "network-flow-card",
+  name: "Network Flow Card",
   description: "Network topology with live throughput animation, styled after the power flow card.",
   preview: false,
 });
 
 console.info(
-  `%c UNIFI-NETWORK-FLOW-CARD %c v${CARD_VERSION} `,
+  `%c NETWORK-FLOW-CARD %c v${CARD_VERSION} `,
   "color:#fff;background:#0559c9;font-weight:700",
   "color:#0559c9;background:#eee"
 );
