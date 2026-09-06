@@ -120,22 +120,22 @@ links:
 | `max_duration` | `6.0` | Seconds for a dot to cross a barely-active link. |
 | `min_duration` | `0.8` | Seconds for a dot to cross a saturated link. |
 | `width` | `520` | Internal design width in px. The card scales to fit its column. |
-| `node_radius` | `28` | Node circle radius in px. |
-| `row_gap` | `52` | Vertical space between levels in px. |
+| `node_radius` | `34` | Node circle radius in px. |
+| `row_gap` | `56` | Vertical space between levels in px. |
 
 ### Nodes
 
 | Option | Default | Description |
 | --- | --- | --- |
 | `id` | required | Unique key, referenced by links. |
-| `level` | `0` | Row, counting from the top. Nodes sharing a level are spread evenly across it. |
+| `level` | `0` | Row, counting from the top. Nodes are positioned under their parent(s) — siblings sharing one parent fan out symmetrically around it; nodes with no parent in an earlier level are spread evenly instead. |
 | `name` | `id` | Label under the circle. |
 | `type` | — | `modem`, `router`, `switch` or `ap`. Sets the default icon and colour. |
 | `icon` | by type | Any `mdi:` icon. |
 | `color` | by type | Any CSS colour. |
-| `download` / `upload` | — | Rate sensors. Shown under the name and used to animate links that don't define their own. |
+| `download` / `upload` | — | Rate sensors. Shown inside the circle and used to animate links that don't define their own. |
 | `latency` | — | Sensor in ms, shown under the name. |
-| `secondary` | — | Any entity, shown as a third line. |
+| `secondary` | — | Any entity. Shown inside the circle if the node has no rates, otherwise as an extra line below the name. |
 | `secondary_unit` | entity's unit | Overrides the unit on that line. |
 | `state` | — | Entity that says whether the device is up. `off`, `unavailable`, `unknown`, `disconnected`, `offline`, `down` or `not_home` fades the node and stops its links. |
 | `entity` | first sensor | Entity opened when the circle is tapped. |

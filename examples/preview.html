@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>unifi-network-flow-card preview</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 24px;
+    background: #111318;
+    font-family: "Segoe UI", Roboto, sans-serif;
+    --primary-text-color: #e3e3e3;
+    --secondary-text-color: #9b9fa6;
+    --card-background-color: #1c1f26;
+    --divider-color: #2b2f38;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <unifi-network-flow-card></unifi-network-flow-card>
+</div>
+
+<script>
+  // Minimal stand-ins so the card can render outside Home Assistant.
+  if (!customElements.get("ha-card")) {
+    customElements.define("ha-card", class extends HTMLElement {
+      connectedCallback() {
+        this.style.display = "block";
+        this.style.background = "var(--card-background-color, #1c1f26)";
+        this.style.borderRadius = "12px";
+        this.style.border = "1px solid var(--divider-color, #2b2f38)";
+        this.style.color = "var(--primary-text-color, #e3e3e3)";
+        this.style.fontFamily = "inherit";
+      }
+    });
+  }
+  if (!customElements.get("ha-icon")) {
+    customElements.define("ha-icon", class extends HTMLElement {
+      connectedCallback() {
+        this.style.display = "inline-flex";
+        this.style.alignItems = "center";
+        this.style.justifyContent = "center";
+        this.textContent = "";
+        const dot = document.createElement("span");
+        dot.style.width = "60%";
+        dot.style.height = "60%";
+        dot.style.borderRadius = "50%";
+        dot.style.background = "currentColor";
+        dot.style.opacity = "0.55";
+        this.appendChild(dot);
+      }
+    });
+  }
+</script>
+<script src="../dist/unifi-network-flow-card.js"></script>
+<script>
+  // Real topology (see README): two LTE WANs into a gateway, down through a
+  // PoE switch to a wired AP and a second switch, out to two mesh APs (both
+  // symmetrically off the wired AP), with a third switch off one of them.
+  const config = {
+    type: "custom:unifi-network-flow-card",
+    title: "Network",
+    nodes: [
+      { id: "mr600", name: "MR600", type: "modem", level: 0, max_speed: 300, latency: "sensor.wan_latency", download: "sensor.mr600_rx", upload: "sensor.mr600_tx" },
+      { id: "mr200", name: "MR200", type: "modem", level: 0, max_speed: 150, latency: "sensor.wan2_latency", download: "sensor.mr200_rx", upload: "sensor.mr200_tx" },
+      { id: "ucg", name: "UCG Ultra", type: "router", level: 1, state: "sensor.ucg_state", secondary: "sensor.ucg_clients", secondary_unit: "clients" },
+      { id: "usw8", name: "USW Lite 8 PoE", type: "switch", level: 2 },
+      { id: "acpro", name: "UAP AC Pro", type: "ap", level: 3 },
+      { id: "flex1", name: "Flex Mini 1", type: "switch", level: 3 },
+      { id: "kitchen", name: "AC Lite Kitchen", type: "ap", level: 4, secondary: "sensor.kitchen_clients", secondary_unit: "clients" },
+      { id: "bedroom", name: "AC Lite Bedroom", type: "ap", level: 4, secondary: "sensor.bedroom_clients", secondary_unit: "clients" },
+      { id: "flex2", name: "Flex Mini 2", type: "switch", level: 5 },
+    ],
+    links: [
+      { from: "mr600", to: "ucg" },
+      { from: "mr200", to: "ucg" },
+      { from: "ucg", to: "usw8" },
+      { from: "usw8", to: "acpro" },
+      { from: "usw8", to: "flex1" },
+      { from: "acpro", to: "kitchen", wireless: true, label: "mesh" },
+      { from: "acpro", to: "bedroom", wireless: true, label: "mesh" },
+      { from: "bedroom", to: "flex2" },
+    ],
+  };
+
+  const states = {
+    "sensor.wan_latency": { state: "14", attributes: {} },
+    "sensor.mr600_rx": { state: "42.5", attributes: { unit_of_measurement: "Mbit/s" } },
+    "sensor.mr600_tx": { state: "8.1", attributes: { unit_of_measurement: "Mbit/s" } },
+    "sensor.wan2_latency": { state: "31", attributes: {} },
+    "sensor.mr200_rx": { state: "6.2", attributes: { unit_of_measurement: "Mbit/s" } },
+    "sensor.mr200_tx": { state: "1.4", attributes: { unit_of_measurement: "Mbit/s" } },
+    "sensor.ucg_state": { state: "on", attributes: {} },
+    "sensor.ucg_clients": { state: "34", attributes: { unit_of_measurement: "clients" } },
+    "sensor.kitchen_clients": { state: "24", attributes: { unit_of_measurement: "clients" } },
+    "sensor.bedroom_clients": { state: "24", attributes: { unit_of_measurement: "clients" } },
+  };
+
+  const card = document.querySelector("unifi-network-flow-card");
+  card.setConfig(config);
+
+  let t = 0;
+  function tick() {
+    t += 1;
+    // Simulated live throughput so the flow dots have something to show.
+    states["sensor.mr600_rx"].state = (30 + 25 * Math.abs(Math.sin(t / 12))).toFixed(1);
+    states["sensor.mr600_tx"].state = (4 + 6 * Math.abs(Math.cos(t / 9))).toFixed(1);
+    card.hass = { states };
+    requestAnimationFrame(() => setTimeout(tick, 400));
+  }
+  tick();
+</script>
+</body>
+</html>

@@ -8,12 +8,12 @@
  * a Lovelace resource of type "JavaScript Module".
  */
 
-const CARD_VERSION = "1.0.0";
+const CARD_VERSION = "2.0.0";
 
 const DEFAULTS = {
   width: 520,
-  node_radius: 28,
-  row_gap: 52,
+  node_radius: 34,
+  row_gap: 56,
   dots: 3,
   max_speed: 1000, // Mbit/s that counts as "full speed" for animation scaling
   min_speed: 0.02, // Mbit/s below which a link is considered idle
@@ -96,13 +96,6 @@ function fmtRate(mbps) {
 
 function cubic(x1, y1, c1x, c1y, c2x, c2y, x2, y2) {
   return `M ${x1} ${y1} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${x2} ${y2}`;
-}
-
-function cubicMid(x1, y1, c1x, c1y, c2x, c2y, x2, y2) {
-  return {
-    x: (x1 + 3 * c1x + 3 * c2x + x2) / 8,
-    y: (y1 + 3 * c1y + 3 * c2y + y2) / 8,
-  };
 }
 
 class UnifiNetworkFlowCard extends HTMLElement {
@@ -220,10 +213,13 @@ class UnifiNetworkFlowCard extends HTMLElement {
   // ---------------------------------------------------------------- layout
 
   _statLines(node) {
+    // Rates and a rate-less secondary value live inside the circle (like
+    // the HA energy card's icon+value). Only latency, and a secondary value
+    // that lost the inside slot to rates, spill out below the name.
+    const hasRates = !!(node.download || node.upload);
     let lines = 0;
     if (node.latency) lines += 1;
-    if (node.download || node.upload) lines += 1;
-    if (node.secondary) lines += 1;
+    if (node.secondary && hasRates) lines += 1;
     return lines;
   }
 
@@ -233,14 +229,72 @@ class UnifiNetworkFlowCard extends HTMLElement {
     const levels = [...new Set(cfg.nodes.map((n) => n.level))].sort((a, b) => a - b);
     const rows = levels.map((lv) => cfg.nodes.filter((n) => n.level === lv));
     const widest = Math.max(...rows.map((r) => r.length));
-    const W = Math.max(cfg.width, widest * 136);
+    const minGap = 136;
+    const W = Math.max(cfg.width, widest * minGap);
+
+    // A node whose only link to an earlier level is shared with a sibling
+    // (e.g. two mesh APs off the same wired AP) should fan out symmetrically
+    // under that parent, not sit wherever plain declaration-order spacing
+    // happens to put it — otherwise one child can land dead straight below
+    // the parent while the other bends, making a perfectly symmetric mesh
+    // read as lopsided. So each row (after the first) is positioned from the
+    // barycenter of each node's already-placed parents, with tied targets
+    // (siblings sharing the same parent set) spread evenly around that
+    // shared point instead of stacking to one side.
+    const parentsOf = new Map(cfg.nodes.map((n) => [n.id, []]));
+    cfg.links.forEach((l) => {
+      if (l.from.level < l.to.level) parentsOf.get(l.to.id).push(l.from);
+      else if (l.to.level < l.from.level) parentsOf.get(l.from.id).push(l.to);
+    });
 
     let y = 14;
     rows.forEach((row) => {
       const statLines = Math.max(0, ...row.map((n) => this._statLines(n)));
       const cy = y + R + 2;
+
+      const fallback = row.map((n, i) => (W * (i + 1)) / (row.length + 1));
+      const want = row.map((n, i) => {
+        const parents = parentsOf.get(n.id).filter((p) => p.x != null);
+        return parents.length
+          ? parents.reduce((s, p) => s + p.x, 0) / parents.length
+          : fallback[i];
+      });
+
+      // Siblings that share the same target fan out evenly around it.
+      const groups = new Map();
+      want.forEach((w, i) => {
+        const k = Math.round(w * 100) / 100;
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(i);
+      });
+      const spread = new Array(row.length);
+      groups.forEach((idxs, target) => {
+        idxs.forEach((idx, pos) => {
+          spread[idx] = target + minGap * (pos - (idxs.length - 1) / 2);
+        });
+      });
+
+      // Resolve any remaining overlap between different targets left-to-right.
+      const order = row.map((_, i) => i).sort((a, b) => spread[a] - spread[b] || a - b);
+      const xs = new Array(row.length);
+      let last = -Infinity;
+      order.forEach((idx) => {
+        const x = Math.max(spread[idx], last + minGap);
+        xs[idx] = x;
+        last = x;
+      });
+
+      // Keep the row's own span on-stage without re-centering it on the
+      // full card width, which would undo the symmetry just computed.
+      const pad = minGap / 2;
+      const lo = Math.min(...xs);
+      const hi = Math.max(...xs);
+      let shift = 0;
+      if (lo < pad) shift = pad - lo;
+      else if (hi > W - pad) shift = W - pad - hi;
+
       row.forEach((n, i) => {
-        n.x = (W * (i + 1)) / (row.length + 1);
+        n.x = xs[i] + shift;
         n.y = cy;
       });
       y += 2 * R + 8 + 18 + statLines * 16 + cfg.row_gap;
@@ -270,24 +324,36 @@ class UnifiNetworkFlowCard extends HTMLElement {
       };
     }
 
-    // Vertical link between levels.
+    // Vertical link between levels, drawn the way the HA energy card draws
+    // its flows: straight out of the node, one smooth bend, straight into
+    // the next node — instead of an S-curve that bends at both ends.
     const inset = Math.sqrt(Math.max(0, R * R - L * L));
     const y1 = a.y + inset;
     const y2 = b.y - inset;
-    const bend = Math.max(26, (y2 - y1) * 0.45);
+    const span = Math.max(0, y2 - y1);
+    const lead = Math.min(clamp(span * 0.3, 10, 34), span * 0.4);
+    const bendH = Math.max(span - 2 * lead, span * 0.2);
+
+    const elbow = (x1, x2) => {
+      const yA = y1 + lead;
+      const yB = yA + bendH;
+      return (
+        `M ${x1} ${y1} L ${x1} ${yA} ` +
+        `C ${x1} ${yA + bendH * 0.55}, ${x2} ${yB - bendH * 0.55}, ${x2} ${yB} ` +
+        `L ${x2} ${y2}`
+      );
+    };
 
     const dx1 = a.x - L;
     const dx2 = b.x - L;
     const ux1 = a.x + L;
     const ux2 = b.x + L;
 
-    const mid = cubicMid(dx1, y1, dx1, y1 + bend, dx2, y2 - bend, dx2, y2);
-
     return {
       lateral: false,
-      down: cubic(dx1, y1, dx1, y1 + bend, dx2, y2 - bend, dx2, y2),
-      up: cubic(ux1, y1, ux1, y1 + bend, ux2, y2 - bend, ux2, y2),
-      mid: { x: mid.x, y: mid.y },
+      down: elbow(dx1, dx2),
+      up: elbow(ux1, ux2),
+      mid: { x: (a.x + b.x) / 2, y: y1 + lead + bendH / 2 },
     };
   }
 
@@ -332,15 +398,23 @@ class UnifiNetworkFlowCard extends HTMLElement {
     const g = this._linkGeometry(link);
     link._geom = g;
     const cls = `lane${link.wireless ? " wireless" : ""}`;
+    const safeKey = link.key.replace(/[^a-zA-Z0-9_-]/g, "_");
+    // Flow dots use the same technique as the HA energy card: a tiny circle
+    // riding an <mpath> reference to the lane's own path, sized with a
+    // non-scaling stroke so it stays a crisp fixed-size dot however far the
+    // card scales its stage to fit the column.
     const dots = (dir) => {
       const out = [];
+      const pathId = `lane-${safeKey}-${dir}`;
       for (let i = 0; i < this._config.dots; i++) {
         const rev = dir === "up"
           ? ' keyPoints="1;0" keyTimes="0;1" calcMode="linear"'
           : "";
         out.push(
-          `<circle class="dot ${dir}" r="3.2" data-dir="${dir}" data-i="${i}">` +
-            `<animateMotion dur="4s" begin="0s" repeatCount="indefinite"${rev} path="${g[dir]}"></animateMotion>` +
+          `<circle class="dot ${dir}" r="1" vector-effect="non-scaling-stroke" data-dir="${dir}" data-i="${i}">` +
+            `<animateMotion dur="4s" begin="0s" repeatCount="indefinite"${rev}>` +
+              `<mpath xlink:href="#${pathId}"></mpath>` +
+            `</animateMotion>` +
           `</circle>`
         );
       }
@@ -348,8 +422,8 @@ class UnifiNetworkFlowCard extends HTMLElement {
     };
     return (
       `<g class="link" data-key="${link.key}">` +
-        `<path class="${cls} down" d="${g.down}"></path>` +
-        `<path class="${cls} up" d="${g.up}"></path>` +
+        `<path id="lane-${safeKey}-down" class="${cls} down" vector-effect="non-scaling-stroke" d="${g.down}"></path>` +
+        `<path id="lane-${safeKey}-up" class="${cls} up" vector-effect="non-scaling-stroke" d="${g.up}"></path>` +
         dots("down") +
         dots("up") +
       `</g>`
@@ -370,19 +444,29 @@ class UnifiNetworkFlowCard extends HTMLElement {
 
   _nodeMarkup(node) {
     const R = this._config.node_radius;
+    const hasRates = !!(node.download || node.upload);
+
+    // Like the HA energy card's circles (icon + value stacked inside a
+    // bordered ring): rates take the inside slot when present, otherwise a
+    // secondary value fills it. Whatever doesn't fit spills below the name.
+    let inside = "";
+    if (hasRates) {
+      inside =
+        (node.download
+          ? `<div class="rate-line down"><ha-icon class="small" icon="mdi:arrow-down"></ha-icon><span data-role="download">—</span></div>`
+          : "") +
+        (node.upload
+          ? `<div class="rate-line up"><ha-icon class="small" icon="mdi:arrow-up"></ha-icon><span data-role="upload">—</span></div>`
+          : "");
+    } else if (node.secondary) {
+      inside = `<div class="rate-line"><span data-role="secondary-inside">—</span></div>`;
+    }
+
     const stats = [];
     if (node.latency) {
       stats.push(`<div class="stat"><span data-role="latency">—</span></div>`);
     }
-    if (node.download || node.upload) {
-      stats.push(
-        `<div class="stat rates">` +
-          (node.download ? `<span class="rate down" data-role="download">—</span>` : "") +
-          (node.upload ? `<span class="rate up" data-role="upload">—</span>` : "") +
-        `</div>`
-      );
-    }
-    if (node.secondary) {
+    if (node.secondary && hasRates) {
       stats.push(`<div class="stat muted"><span data-role="secondary">—</span></div>`);
     }
 
@@ -390,6 +474,7 @@ class UnifiNetworkFlowCard extends HTMLElement {
       `<div class="node" data-id="${node.id}" style="left:${node.x}px;top:${node.y}px;--node-color:${node.color}">` +
         `<div class="circle" tabindex="0" role="button" style="width:${2 * R}px;height:${2 * R}px">` +
           `<ha-icon icon="${node.icon}"></ha-icon>` +
+          inside +
         `</div>` +
         `<div class="name">${node.name}</div>` +
         `<div class="stats">${stats.join("")}</div>` +
@@ -408,6 +493,7 @@ class UnifiNetworkFlowCard extends HTMLElement {
         download: el.querySelector('[data-role="download"]'),
         upload: el.querySelector('[data-role="upload"]'),
         secondary: el.querySelector('[data-role="secondary"]'),
+        secondaryInside: el.querySelector('[data-role="secondary-inside"]'),
       });
     });
 
@@ -482,11 +568,13 @@ class UnifiNetworkFlowCard extends HTMLElement {
       if (els.upload) {
         els.upload.textContent = fmtRate(toMbps(readSensor(hass, n.upload)));
       }
-      if (els.secondary) {
+      if (els.secondary || els.secondaryInside) {
         const st = hass.states[n.secondary.entity];
         const val = st ? st.state : null;
         const unit = n.secondary_unit || (st && st.attributes.unit_of_measurement) || "";
-        els.secondary.textContent = val == null ? "—" : `${val}${unit ? " " + unit : ""}`;
+        const text = val == null ? "—" : `${val}${unit ? " " + unit : ""}`;
+        if (els.secondary) els.secondary.textContent = text;
+        if (els.secondaryInside) els.secondaryInside.textContent = text;
       }
 
       let offline = false;
@@ -530,7 +618,7 @@ class UnifiNetworkFlowCard extends HTMLElement {
 
       lane.dots.forEach((d) => {
         d.setAttribute("opacity", "1");
-        d.setAttribute("r", (2.6 + ratio * 2.4).toFixed(2));
+        d.style.strokeWidth = (3.2 + ratio * 2.4).toFixed(2);
       });
 
       // Only touch the animation when the rate has moved meaningfully,
@@ -572,10 +660,16 @@ class UnifiNetworkFlowCard extends HTMLElement {
   // ---------------------------------------------------------------- styles
 
   _styles() {
+    // Visual language borrowed straight from HA's own Energy Distribution
+    // card: a bordered circle per node with its icon + value stacked inside,
+    // a muted label underneath, and flow lines that run straight out of a
+    // node, bend once, and run straight into the next — with a small solid
+    // dot (non-scaling stroke, exactly like the energy card's flow dots)
+    // riding each lane to show live throughput.
     return `
-      :host { display: block; }
+      :host { display: block; --mdc-icon-size: 24px; }
       ha-card { overflow: hidden; }
-      .content { padding: 4px 8px 12px; }
+      .content { padding: 4px 8px 12px; position: relative; }
       .viewport { position: relative; width: 100%; overflow: hidden; }
       .stage { position: absolute; top: 0; left: 0; transform-origin: top left; }
       svg.links { position: absolute; top: 0; left: 0; overflow: visible; }
@@ -589,10 +683,11 @@ class UnifiNetworkFlowCard extends HTMLElement {
       .lane.down { stroke: var(--unf-down-color, #2196f3); }
       .lane.up { stroke: var(--unf-up-color, #ff9800); }
       .lane.wireless { stroke-dasharray: 5 5; opacity: 0.45; }
-      .lane.idle { opacity: 0.18; }
+      .lane.idle { opacity: 0.16; }
 
-      .dot.down { fill: var(--unf-down-color, #2196f3); }
-      .dot.up { fill: var(--unf-up-color, #ff9800); }
+      .dot { stroke-width: 3.2px; }
+      .dot.down { fill: var(--unf-down-color, #2196f3); stroke: var(--unf-down-color, #2196f3); }
+      .dot.up { fill: var(--unf-up-color, #ff9800); stroke: var(--unf-up-color, #ff9800); }
 
       .node {
         position: absolute;
@@ -606,26 +701,43 @@ class UnifiNetworkFlowCard extends HTMLElement {
 
       .circle {
         margin: 0 auto;
-        border-radius: 50%;
+        border-radius: var(--ha-border-radius-circle, 50%);
         border: 2px solid var(--node-color);
-        background: var(--card-background-color, #fff);
+        background: var(--card-background-color, var(--ha-card-background, #fff));
+        box-sizing: border-box;
         display: flex;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
-        color: var(--node-color);
-        box-sizing: border-box;
+        text-align: center;
+        font-size: var(--ha-font-size-s, 12px);
+        line-height: 1.15;
+        color: var(--primary-text-color);
+        position: relative;
       }
       .circle.tappable { cursor: pointer; }
       .circle.tappable:hover { background: color-mix(in srgb, var(--node-color) 12%, var(--card-background-color, #fff)); }
       .circle:focus-visible { outline: 2px solid var(--node-color); outline-offset: 3px; }
-      .circle ha-icon { --mdc-icon-size: 24px; width: 24px; height: 24px; }
+      .circle > ha-icon:first-child { --mdc-icon-size: 22px; width: 22px; height: 22px; color: var(--node-color); padding-bottom: 1px; }
+
+      .rate-line {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 1px;
+        font-size: 9px;
+        line-height: 11px;
+        white-space: nowrap;
+      }
+      .rate-line ha-icon.small { --mdc-icon-size: 10px; width: 10px; height: 10px; }
+      .rate-line.down { color: var(--unf-down-color, #2196f3); }
+      .rate-line.up { color: var(--unf-up-color, #ff9800); }
 
       .name {
-        margin-top: 5px;
-        font-size: 12px;
+        margin-top: 6px;
+        font-size: var(--ha-font-size-s, 12px);
         line-height: 14px;
-        font-weight: 500;
-        color: var(--primary-text-color);
+        color: var(--secondary-text-color);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -633,18 +745,11 @@ class UnifiNetworkFlowCard extends HTMLElement {
       .stats { margin-top: 1px; }
       .stat {
         font-size: 11px;
-        line-height: 16px;
+        line-height: 15px;
         color: var(--secondary-text-color);
         white-space: nowrap;
       }
       .stat.muted { opacity: 0.75; }
-      .stat.rates { display: flex; gap: 8px; justify-content: center; }
-
-      .rate::before { margin-right: 2px; font-size: 10px; }
-      .rate.down { color: var(--unf-down-color, #2196f3); }
-      .rate.down::before { content: "\\2193"; }
-      .rate.up { color: var(--unf-up-color, #ff9800); }
-      .rate.up::before { content: "\\2191"; }
 
       .link-label {
         position: absolute;
@@ -657,6 +762,11 @@ class UnifiNetworkFlowCard extends HTMLElement {
         pointer-events: none;
       }
       .link-label .link-name { color: var(--secondary-text-color); }
+      .link-label .rate::before { margin-right: 2px; font-size: 10px; }
+      .link-label .rate.down { color: var(--unf-down-color, #2196f3); }
+      .link-label .rate.down::before { content: "\\2193"; }
+      .link-label .rate.up { color: var(--unf-up-color, #ff9800); }
+      .link-label .rate.up::before { content: "\\2191"; }
 
       @media (prefers-reduced-motion: reduce) {
         .dot { display: none; }
