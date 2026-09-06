@@ -436,8 +436,10 @@ class UnifiNetworkFlowCard extends HTMLElement {
     return (
       `<div class="link-label" data-key="${link.key}" style="left:${g.mid.x}px;top:${g.mid.y}px">` +
         (link.label ? `<span class="link-name">${link.label}</span>` : "") +
-        `<span class="rate down" data-role="down">—</span>` +
-        `<span class="rate up" data-role="up">—</span>` +
+        (link.explicit
+          ? `<span class="rate down" data-role="down">—</span>` +
+            `<span class="rate up" data-role="up">—</span>`
+          : "") +
       `</div>`
     );
   }
