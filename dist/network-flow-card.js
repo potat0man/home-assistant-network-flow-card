@@ -8,7 +8,7 @@
  * a Lovelace resource of type "JavaScript Module".
  */
 
-const CARD_VERSION = "2026.09.06.1523";
+const CARD_VERSION = "2026.09.06.2013";
 
 const DEFAULTS = {
   width: 520,
@@ -23,19 +23,42 @@ const DEFAULTS = {
 };
 
 const COLORS = {
-  modem: "#03a9f4",
+  www: "#03a9f4",
+  wired_modem: "#0288d1",
+  wireless_modem: "#0288d1",
   router: "#7e57c2",
   switch: "#26a69a",
   ap: "#ef6c00",
+  server: "#43a047",
+  pc: "#8d6e63",
   default: "#78909c",
 };
 
 const TYPE_ICON = {
-  modem: "mdi:web",
+  www: "mdi:web",
+  wired_modem: "mdi:router",
+  wireless_modem: "mdi:router-wireless",
   router: "mdi:router-network",
   switch: "mdi:lan",
   ap: "mdi:access-point",
+  server: "mdi:server",
+  pc: "mdi:desktop-tower-monitor",
 };
+
+// "Wired Modem", "wired-modem" and "wired_modem" all mean the same thing, and
+// the old single "modem" type still resolves to the wired one.
+const TYPE_ALIAS = { modem: "wired_modem" };
+
+const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+
+function normType(raw) {
+  if (raw == null || raw === "") return "default";
+  const key = String(raw).trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const type = has(TYPE_ALIAS, key) ? TYPE_ALIAS[key] : key;
+  // Unknown types fall back to the neutral defaults, and never to something
+  // inherited from Object.prototype ("constructor" is a plausible node type).
+  return has(TYPE_ICON, type) ? type : "default";
+}
 
 // Everything is normalised to Mbit/s internally.
 const UNIT_TO_MBPS = {
@@ -112,10 +135,14 @@ class NetworkFlowCard extends HTMLElement {
       type: "custom:network-flow-card",
       title: "Network",
       nodes: [
-        { id: "wan", name: "WAN", type: "modem", level: 0 },
-        { id: "router", name: "Router", type: "router", level: 1 },
+        { id: "www", name: "Internet", type: "www", level: 0 },
+        { id: "modem", name: "Modem", type: "wired_modem", level: 1 },
+        { id: "router", name: "Router", type: "router", level: 2 },
       ],
-      links: [{ from: "wan", to: "router" }],
+      links: [
+        { from: "www", to: "modem" },
+        { from: "modem", to: "router" },
+      ],
     };
   }
 
@@ -139,7 +166,7 @@ class NetworkFlowCard extends HTMLElement {
 
     const nodes = config.nodes.map((n, i) => {
       if (!n.id) throw new Error(`network-flow-card: node #${i + 1} has no 'id'`);
-      const type = n.type || "default";
+      const type = normType(n.type);
       return {
         id: n.id,
         name: n.name || n.id,
