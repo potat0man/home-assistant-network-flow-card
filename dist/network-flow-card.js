@@ -8,7 +8,7 @@
  * a Lovelace resource of type "JavaScript Module".
  */
 
-const CARD_VERSION = "2026.09.06.1516";
+const CARD_VERSION = "2026.09.06.1523";
 
 const DEFAULTS = {
   width: 520,
@@ -98,6 +98,14 @@ function cubic(x1, y1, c1x, c1y, c2x, c2y, x2, y2) {
   return `M ${x1} ${y1} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${x2} ${y2}`;
 }
 
+const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
+// Names, labels, icons and colours come from user YAML and are interpolated
+// into markup, so a device called "Office <2>" or "A & B" must not break it.
+function esc(value) {
+  return String(value).replace(/[&<>"']/g, (c) => ESCAPES[c]);
+}
+
 class NetworkFlowCard extends HTMLElement {
   static getStubConfig() {
     return {
@@ -169,7 +177,7 @@ class NetworkFlowCard extends HTMLElement {
       }
 
       return {
-        key: `${l.from}>${l.to}#${i}`,
+        idx: i,
         from,
         to,
         download,
@@ -181,7 +189,24 @@ class NetworkFlowCard extends HTMLElement {
       };
     });
 
+    const tracked = new Set();
+    const track = (sensor) => {
+      if (sensor && sensor.entity) tracked.add(sensor.entity);
+    };
+    nodes.forEach((n) => {
+      track(n.download);
+      track(n.upload);
+      track(n.latency);
+      track(n.secondary);
+      if (n.state_entity) tracked.add(n.state_entity);
+    });
+    links.forEach((l) => {
+      track(l.download);
+      track(l.upload);
+    });
+
     this._config = { ...opts, nodes, links, byId };
+    this._tracked = [...tracked];
     this._built = false;
     this._nodeEls.clear();
     this._linkEls.clear();
@@ -190,8 +215,16 @@ class NetworkFlowCard extends HTMLElement {
   }
 
   set hass(hass) {
+    const prev = this._hass;
     this._hass = hass;
-    if (this._built) this._updateValues();
+    if (!this._built) return;
+    // Home Assistant hands every card a fresh hass object on every state
+    // change anywhere in the system. Repainting the whole diagram each time
+    // is wasted work, so only redraw when an entity this card draws moved.
+    if (prev && !this._tracked.some((id) => prev.states[id] !== hass.states[id])) {
+      return;
+    }
+    this._updateValues();
   }
 
   getCardSize() {
@@ -208,6 +241,7 @@ class NetworkFlowCard extends HTMLElement {
   disconnectedCallback() {
     if (this._ro) this._ro.disconnect();
     this._ro = null;
+    this._observed = null;
   }
 
   // ---------------------------------------------------------------- layout
@@ -368,7 +402,7 @@ class NetworkFlowCard extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>${this._styles()}</style>
       <ha-card>
-        ${cfg.title ? `<h1 class="card-header">${cfg.title}</h1>` : ""}
+        ${cfg.title ? `<h1 class="card-header">${esc(cfg.title)}</h1>` : ""}
         <div class="content">
           <div class="viewport">
             <div class="stage" style="width:${W}px;height:${H}px">
@@ -398,14 +432,13 @@ class NetworkFlowCard extends HTMLElement {
     const g = this._linkGeometry(link);
     link._geom = g;
     const cls = `lane${link.wireless ? " wireless" : ""}`;
-    const safeKey = link.key.replace(/[^a-zA-Z0-9_-]/g, "_");
     // Flow dots use the same technique as the HA energy card: a tiny circle
     // riding an <mpath> reference to the lane's own path, sized with a
     // non-scaling stroke so it stays a crisp fixed-size dot however far the
     // card scales its stage to fit the column.
     const dots = (dir) => {
       const out = [];
-      const pathId = `lane-${safeKey}-${dir}`;
+      const pathId = `lane-${link.idx}-${dir}`;
       for (let i = 0; i < this._config.dots; i++) {
         const rev = dir === "up"
           ? ' keyPoints="1;0" keyTimes="0;1" calcMode="linear"'
@@ -421,9 +454,9 @@ class NetworkFlowCard extends HTMLElement {
       return out.join("");
     };
     return (
-      `<g class="link" data-key="${link.key}">` +
-        `<path id="lane-${safeKey}-down" class="${cls} down" vector-effect="non-scaling-stroke" d="${g.down}"></path>` +
-        `<path id="lane-${safeKey}-up" class="${cls} up" vector-effect="non-scaling-stroke" d="${g.up}"></path>` +
+      `<g class="link" data-key="${link.idx}">` +
+        `<path id="lane-${link.idx}-down" class="${cls} down" vector-effect="non-scaling-stroke" d="${g.down}"></path>` +
+        `<path id="lane-${link.idx}-up" class="${cls} up" vector-effect="non-scaling-stroke" d="${g.up}"></path>` +
         dots("down") +
         dots("up") +
       `</g>`
@@ -434,8 +467,8 @@ class NetworkFlowCard extends HTMLElement {
     if (!link.explicit && !link.label) return "";
     const g = link._geom;
     return (
-      `<div class="link-label" data-key="${link.key}" style="left:${g.mid.x}px;top:${g.mid.y}px">` +
-        (link.label ? `<span class="link-name">${link.label}</span>` : "") +
+      `<div class="link-label" data-key="${link.idx}" style="left:${g.mid.x}px;top:${g.mid.y}px">` +
+        (link.label ? `<span class="link-name">${esc(link.label)}</span>` : "") +
         (link.explicit
           ? `<span class="rate down" data-role="down">—</span>` +
             `<span class="rate up" data-role="up">—</span>`
@@ -472,23 +505,46 @@ class NetworkFlowCard extends HTMLElement {
       stats.push(`<div class="stat muted"><span data-role="secondary">—</span></div>`);
     }
 
+    // Only a circle that actually opens something should be reachable by
+    // keyboard and announced as a button; the rest are decorative, since the
+    // name underneath already carries the node's identity.
+    const tappable = !!this._tapEntity(node);
+    const tapAttrs = tappable
+      ? ` tabindex="0" role="button" aria-label="${esc(node.name)}"`
+      : "";
+
     return (
-      `<div class="node" data-id="${node.id}" style="left:${node.x}px;top:${node.y}px;--node-color:${node.color}">` +
-        `<div class="circle" tabindex="0" role="button" style="width:${2 * R}px;height:${2 * R}px">` +
-          `<ha-icon icon="${node.icon}"></ha-icon>` +
+      `<div class="node" data-id="${esc(node.id)}" style="left:${node.x}px;top:${node.y}px;--node-color:${esc(node.color)}">` +
+        `<div class="circle${tappable ? " tappable" : ""}"${tapAttrs} style="width:${2 * R}px;height:${2 * R}px">` +
+          `<ha-icon icon="${esc(node.icon)}"></ha-icon>` +
           inside +
         `</div>` +
-        `<div class="name">${node.name}</div>` +
+        `<div class="name">${esc(node.name)}</div>` +
         `<div class="stats">${stats.join("")}</div>` +
       `</div>`
     );
   }
 
+  _tapEntity(node) {
+    return (
+      node.entity ||
+      node.state_entity ||
+      (node.download && node.download.entity) ||
+      (node.latency && node.latency.entity) ||
+      (node.secondary && node.secondary.entity) ||
+      null
+    );
+  }
+
   _cacheElements() {
     const root = this.shadowRoot;
+    // Nodes are emitted in config order, so pair them off positionally rather
+    // than by attribute selector — ids come from user YAML and may contain
+    // anything.
+    const nodeEls = root.querySelectorAll(".node");
     this._nodeEls.clear();
-    this._config.nodes.forEach((n) => {
-      const el = root.querySelector(`.node[data-id="${n.id}"]`);
+    this._config.nodes.forEach((n, i) => {
+      const el = nodeEls[i];
       this._nodeEls.set(n.id, {
         root: el,
         latency: el.querySelector('[data-role="latency"]'),
@@ -501,9 +557,9 @@ class NetworkFlowCard extends HTMLElement {
 
     this._linkEls.clear();
     this._config.links.forEach((l) => {
-      const g = root.querySelector(`g.link[data-key="${l.key}"]`);
-      const label = root.querySelector(`.link-label[data-key="${l.key}"]`);
-      this._linkEls.set(l.key, {
+      const g = root.querySelector(`g.link[data-key="${l.idx}"]`);
+      const label = root.querySelector(`.link-label[data-key="${l.idx}"]`);
+      this._linkEls.set(l.idx, {
         group: g,
         down: {
           path: g.querySelector("path.down"),
@@ -521,15 +577,9 @@ class NetworkFlowCard extends HTMLElement {
 
   _wireTaps() {
     this._config.nodes.forEach((n) => {
-      const el = this._nodeEls.get(n.id).root.querySelector(".circle");
-      const entityId =
-        n.entity ||
-        n.state_entity ||
-        (n.download && n.download.entity) ||
-        (n.latency && n.latency.entity) ||
-        (n.secondary && n.secondary.entity);
+      const entityId = this._tapEntity(n);
       if (!entityId) return;
-      el.classList.add("tappable");
+      const el = this._nodeEls.get(n.id).root.querySelector(".circle");
       const fire = () => {
         this.dispatchEvent(
           new CustomEvent("hass-more-info", {
@@ -592,7 +642,7 @@ class NetworkFlowCard extends HTMLElement {
   }
 
   _updateLink(link) {
-    const els = this._linkEls.get(link.key);
+    const els = this._linkEls.get(link.idx);
     if (!els) return;
     const dead = link.from._offline || link.to._offline;
 
@@ -608,7 +658,7 @@ class NetworkFlowCard extends HTMLElement {
 
       if (!active) {
         lane.dots.forEach((d) => d.setAttribute("opacity", "0"));
-        this._lastRatio.set(link.key + dir, -1);
+        this._lastRatio.set(`${link.idx}-${dir}`, -1);
         return;
       }
 
@@ -625,9 +675,9 @@ class NetworkFlowCard extends HTMLElement {
 
       // Only touch the animation when the rate has moved meaningfully,
       // so steady traffic doesn't make the dots stutter on every poll.
-      const prev = this._lastRatio.get(link.key + dir);
+      const prev = this._lastRatio.get(`${link.idx}-${dir}`);
       if (prev == null || Math.abs(ratio - prev) > 0.06) {
-        this._lastRatio.set(link.key + dir, ratio);
+        this._lastRatio.set(`${link.idx}-${dir}`, ratio);
         lane.dots.forEach((d, i) => {
           const anim = d.querySelector("animateMotion");
           if (!anim) return;
@@ -641,11 +691,16 @@ class NetworkFlowCard extends HTMLElement {
   // ---------------------------------------------------------------- sizing
 
   _observe() {
-    if (this._ro || !this.shadowRoot) return;
+    if (!this.shadowRoot || typeof ResizeObserver === "undefined") return;
     const vp = this.shadowRoot.querySelector(".viewport");
-    if (!vp || typeof ResizeObserver === "undefined") return;
-    this._ro = new ResizeObserver(() => this._fit());
+    // _render() replaces the shadow tree wholesale, so re-point the observer
+    // at the new viewport — otherwise it keeps watching a detached node and
+    // the card stops rescaling after a config change.
+    if (!vp || this._observed === vp) return;
+    if (!this._ro) this._ro = new ResizeObserver(() => this._fit());
+    else this._ro.disconnect();
     this._ro.observe(vp);
+    this._observed = vp;
   }
 
   _fit() {
@@ -735,14 +790,23 @@ class NetworkFlowCard extends HTMLElement {
       .rate-line.down { color: var(--nfc-down-color, #2196f3); }
       .rate-line.up { color: var(--nfc-up-color, #ff9800); }
 
+      /* The lanes run down past the node's own caption, so give the text a
+         background in the card colour: the line breaks cleanly behind it
+         instead of striking through the words. */
       .name {
+        display: inline-block;
+        max-width: 100%;
+        box-sizing: border-box;
+        padding: 0 4px;
         margin-top: 6px;
+        background: var(--card-background-color, var(--ha-card-background, #fff));
         font-size: var(--ha-font-size-s, 12px);
         line-height: 14px;
         color: var(--secondary-text-color);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        vertical-align: bottom;
       }
       .stats { margin-top: 1px; }
       .stat {
@@ -750,6 +814,10 @@ class NetworkFlowCard extends HTMLElement {
         line-height: 15px;
         color: var(--secondary-text-color);
         white-space: nowrap;
+      }
+      .stat > span {
+        padding: 0 4px;
+        background: var(--card-background-color, var(--ha-card-background, #fff));
       }
       .stat.muted { opacity: 0.75; }
 
@@ -787,7 +855,8 @@ window.customCards.push({
   type: "network-flow-card",
   name: "Network Flow Card",
   description: "Network topology with live throughput animation, styled after the power flow card.",
-  preview: false,
+  preview: true,
+  documentationURL: "https://github.com/potat0man/home-assistant-network-flow-card",
 });
 
 console.info(
