@@ -8,12 +8,13 @@
  * a Lovelace resource of type "JavaScript Module".
  */
 
-const CARD_VERSION = "2026.09.06.2013";
+const CARD_VERSION = "2026.09.06.2054";
 
 const DEFAULTS = {
   width: 520,
   node_radius: 34,
   row_gap: 56,
+  column_gap: 8,
   dots: 3,
   max_speed: 1000, // Mbit/s that counts as "full speed" for animation scaling
   min_speed: 0.02, // Mbit/s below which a link is considered idle
@@ -21,6 +22,11 @@ const DEFAULTS = {
   min_duration: 0.8, // seconds for a dot to cross a saturated link
   lane_offset: 7,
 };
+
+// Width of a node's box: the circle is narrower than this, but the caption
+// under it isn't, so this is what has to clear its neighbour. Layout and CSS
+// both work from it, so they can't drift apart.
+const NODE_WIDTH = 128;
 
 const COLORS = {
   www: "#03a9f4",
@@ -290,7 +296,10 @@ class NetworkFlowCard extends HTMLElement {
     const levels = [...new Set(cfg.nodes.map((n) => n.level))].sort((a, b) => a - b);
     const rows = levels.map((lv) => cfg.nodes.filter((n) => n.level === lv));
     const widest = Math.max(...rows.map((r) => r.length));
-    const minGap = 136;
+    // Centre-to-centre spacing of neighbours in a row: a node box plus the
+    // configured gap, but never so tight that the circles themselves touch
+    // (which a large node_radius or a negative column_gap would otherwise do).
+    const minGap = Math.max(2 * R + 8, NODE_WIDTH + Number(cfg.column_gap));
     const W = Math.max(cfg.width, widest * minGap);
 
     // A node whose only link to an earlier level is shared with a sibling
@@ -775,8 +784,8 @@ class NetworkFlowCard extends HTMLElement {
 
       .node {
         position: absolute;
-        width: 128px;
-        margin-left: -64px;
+        width: ${NODE_WIDTH}px;
+        margin-left: ${-NODE_WIDTH / 2}px;
         margin-top: -30px;
         text-align: center;
         transition: opacity 180ms ease;
