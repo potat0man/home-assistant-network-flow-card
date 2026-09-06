@@ -143,6 +143,7 @@ links:
 | `width` | `520` | Internal design width in px. The card scales to fit its column. |
 | `node_radius` | `34` | Node circle radius in px. |
 | `row_gap` | `56` | Vertical space between levels in px. |
+| `column_gap` | `8` | Horizontal space between neighbouring nodes in px. A node's caption is 128px wide, so this is the space between captions, not between circles. The card widens to fit and then scales to your column, so a bigger gap draws everything slightly smaller. |
 
 ### Nodes
 
