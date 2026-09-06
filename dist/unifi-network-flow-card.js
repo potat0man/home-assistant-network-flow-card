@@ -8,7 +8,7 @@
  * a Lovelace resource of type "JavaScript Module".
  */
 
-const CARD_VERSION = "2.0.0";
+const CARD_VERSION = "2026.09.06.1456";
 
 const DEFAULTS = {
   width: 520,
